@@ -512,15 +512,9 @@ def train_xgboost(X_train, y_train, X_val, y_val, X_test, y_test):
         'eval_metric': 'mlogloss' if n_classes > 2 else 'logloss'
     }
     
-    # Train with early stopping
+    # Train
     clf = xgb.XGBClassifier(**params)
-    
-    clf.fit(
-        X_train_s, y_train,
-        eval_set=[(X_val_s, y_val)],
-        early_stopping_rounds=20,
-        verbose=False
-    )
+    clf.fit(X_train_s, y_train)
     
     # Predict
     y_pred = clf.predict(X_test_s)
