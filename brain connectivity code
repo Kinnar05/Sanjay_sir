@@ -1,0 +1,541 @@
+"""
+Brain Connectivity Visualization for MDD vs Healthy Controls
+=============================================================
+Creates visualization plots similar to Figure 10 from the paper:
+"An EEG-based marker of functional connectivity: detection of major depressive disorder"
+
+This code generates circular brain connectivity plots showing:
+- Node positions based on 19 EEG electrodes
+- Connection strength between electrodes
+- Separate visualizations for each frequency band
+- Comparison between MDD patients and Healthy controls
+
+Dependencies:
+- numpy, matplotlib, pandas
+- The final_depression_cwt_iplv_xgboost.py must be run first to extract features
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+import matplotlib.patches as mpatches
+from pathlib import Path
+import sys
+
+# Import from the main code
+sys.path.append('/mnt/user-data/outputs')
+
+# ============================================================================
+# ELECTRODE POSITIONS (19 channels in 10-20 system)
+# ============================================================================
+
+def get_electrode_positions():
+    """
+    Get 2D positions for 19 electrodes arranged in a circular layout
+    Based on 10-20 international system (matching the paper exactly)
+    
+    Returns:
+        dict: electrode name -> (x, y) position
+    """
+    # 19 electrodes as per paper - exactly matching the standard montage
+    electrodes = {
+        # Frontal
+        'Fp1': (-0.3, 0.95),
+        'Fp2': (0.3, 0.95),
+        'F7': (-0.7, 0.6),
+        'F3': (-0.35, 0.7),
+        'Fz': (0.0, 0.75),
+        'F4': (0.35, 0.7),
+        'F8': (0.7, 0.6),
+        
+        # Temporal
+        'T7': (-0.95, 0.0),
+        'T8': (0.95, 0.0),
+        
+        # Central
+        'C3': (-0.5, 0.0),
+        'Cz': (0.0, 0.0),
+        'C4': (0.5, 0.0),
+        
+        # Parietal
+        'P7': (-0.85, -0.5),
+        'P3': (-0.4, -0.6),
+        'Pz': (0.0, -0.65),
+        'P4': (0.4, -0.6),
+        'P8': (0.85, -0.5),
+        
+        # Occipital
+        'O1': (-0.25, -0.95),
+        'O2': (0.25, -0.95),
+    }
+    
+    return electrodes
+
+
+# ============================================================================
+# CONNECTIVITY MATRIX COMPUTATION
+# ============================================================================
+
+def compute_connectivity_matrices_from_features(feature_vectors, labels, band_indices):
+    """
+    Compute average connectivity matrices for each class and frequency band
+    
+    Args:
+        feature_vectors: numpy array of shape (n_samples, n_features)
+        labels: numpy array of shape (n_samples,)
+        band_indices: dict mapping band names to feature indices
+        
+    Returns:
+        dict: {class_label: {band_name: connectivity_matrix}}
+    """
+    n_channels = 19  # Fixed for our setup
+    n_pairs = n_channels * (n_channels - 1) // 2  # 171 pairs
+    
+    connectivity_matrices = {}
+    
+    # For each class
+    for class_label in [0, 1]:  # 0=Healthy, 1=MDD
+        class_mask = labels == class_label
+        class_features = feature_vectors[class_mask]
+        
+        connectivity_matrices[class_label] = {}
+        
+        # For each frequency band
+        for band_name, indices in band_indices.items():
+            # Extract features for this band
+            band_features = class_features[:, indices]
+            
+            # Average across all samples
+            avg_features = np.mean(band_features, axis=0)
+            
+            # Reconstruct connectivity matrix from features
+            conn_matrix = np.zeros((n_channels, n_channels))
+            
+            # Fill upper triangle
+            idx = 0
+            for i in range(n_channels):
+                for j in range(i + 1, n_channels):
+                    conn_matrix[i, j] = avg_features[idx]
+                    conn_matrix[j, i] = avg_features[idx]  # Symmetric
+                    idx += 1
+            
+            connectivity_matrices[class_label][band_name] = conn_matrix
+    
+    return connectivity_matrices
+
+
+def get_band_feature_indices(n_channels=19, bands=['delta', 'theta', 'alpha', 'beta', 'gamma']):
+    """
+    Get feature indices for each frequency band
+    
+    Features are organized as: [pair1_delta, pair1_theta, ..., pair2_delta, ...]
+    Total: 171 pairs × 5 bands = 855 features
+    """
+    n_pairs = n_channels * (n_channels - 1) // 2  # 171
+    n_bands = len(bands)
+    
+    band_indices = {}
+    
+    for band_idx, band_name in enumerate(bands):
+        # For each band, features are at positions: band_idx, band_idx + n_bands, ...
+        indices = [band_idx + i * n_bands for i in range(n_pairs)]
+        band_indices[band_name] = indices
+    
+    return band_indices
+
+
+# ============================================================================
+# VISUALIZATION
+# ============================================================================
+
+def plot_brain_connectivity(conn_matrix, electrode_positions, title, 
+                           threshold=0.3, cmap='jet', figsize=(8, 8)):
+    """
+    Plot brain connectivity in circular layout
+    
+    Args:
+        conn_matrix: 19x19 connectivity matrix
+        electrode_positions: dict of electrode positions
+        title: plot title
+        threshold: minimum connection strength to display
+        cmap: colormap for connections
+        figsize: figure size
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Get electrode names in order
+    electrode_names = list(electrode_positions.keys())
+    
+    # Draw connections
+    connection_count = 0
+    for i, elec1 in enumerate(electrode_names):
+        for j, elec2 in enumerate(electrode_names):
+            if i < j:  # Upper triangle only
+                strength = conn_matrix[i, j]
+                
+                if strength > threshold:
+                    x1, y1 = electrode_positions[elec1]
+                    x2, y2 = electrode_positions[elec2]
+                    
+                    # Color based on strength
+                    color = plt.cm.get_cmap(cmap)(strength)
+                    
+                    # Line width based on strength
+                    linewidth = 0.5 + 2.5 * strength
+                    
+                    ax.plot([x1, x2], [y1, y2], 
+                           color=color, 
+                           linewidth=linewidth, 
+                           alpha=0.6,
+                           zorder=1)
+                    connection_count += 1
+    
+    # Draw electrode nodes
+    for elec_name, (x, y) in electrode_positions.items():
+        # Node circle
+        circle = Circle((x, y), 0.08, 
+                       facecolor='lightblue', 
+                       edgecolor='darkblue', 
+                       linewidth=2,
+                       zorder=2)
+        ax.add_patch(circle)
+        
+        # Label
+        ax.text(x, y, elec_name, 
+               fontsize=8, 
+               ha='center', 
+               va='center',
+               fontweight='bold',
+               zorder=3)
+    
+    # Draw head outline
+    head_circle = Circle((0, 0), 1.1, 
+                         facecolor='none', 
+                         edgecolor='black', 
+                         linewidth=2,
+                         linestyle='--',
+                         zorder=0)
+    ax.add_patch(head_circle)
+    
+    # Add nose
+    nose_x = [0, -0.1, 0.1, 0]
+    nose_y = [1.1, 1.3, 1.3, 1.1]
+    ax.plot(nose_x, nose_y, 'k-', linewidth=2, zorder=0)
+    
+    # Settings
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.4, 1.5)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+    
+    # Add colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, 
+                               norm=plt.Normalize(vmin=0, vmax=1))
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Connection Strength', rotation=270, labelpad=20)
+    
+    # Add connection count
+    ax.text(0.02, 0.98, f'Connections: {connection_count}', 
+           transform=ax.transAxes,
+           fontsize=10,
+           verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    return fig
+
+
+def create_comparison_plot(connectivity_matrices, band_name, 
+                          electrode_positions, threshold=0.3):
+    """
+    Create side-by-side comparison of Healthy vs MDD for one frequency band
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    
+    class_names = {0: 'Healthy Controls', 1: 'MDD Patients'}
+    
+    for class_label, ax in zip([0, 1], axes):
+        conn_matrix = connectivity_matrices[class_label][band_name]
+        electrode_names = list(electrode_positions.keys())
+        
+        # Count connections
+        connection_count = 0
+        
+        # Draw connections
+        for i, elec1 in enumerate(electrode_names):
+            for j, elec2 in enumerate(electrode_names):
+                if i < j:
+                    strength = conn_matrix[i, j]
+                    
+                    if strength > threshold:
+                        x1, y1 = electrode_positions[elec1]
+                        x2, y2 = electrode_positions[elec2]
+                        
+                        color = plt.cm.jet(strength)
+                        linewidth = 0.5 + 2.5 * strength
+                        
+                        ax.plot([x1, x2], [y1, y2], 
+                               color=color, 
+                               linewidth=linewidth, 
+                               alpha=0.6,
+                               zorder=1)
+                        connection_count += 1
+        
+        # Draw nodes
+        for elec_name, (x, y) in electrode_positions.items():
+            circle = Circle((x, y), 0.08, 
+                           facecolor='lightblue', 
+                           edgecolor='darkblue', 
+                           linewidth=2,
+                           zorder=2)
+            ax.add_patch(circle)
+            
+            ax.text(x, y, elec_name, 
+                   fontsize=8, 
+                   ha='center', 
+                   va='center',
+                   fontweight='bold',
+                   zorder=3)
+        
+        # Head outline
+        head_circle = Circle((0, 0), 1.1, 
+                             facecolor='none', 
+                             edgecolor='black', 
+                             linewidth=2,
+                             linestyle='--',
+                             zorder=0)
+        ax.add_patch(head_circle)
+        
+        # Nose
+        nose_x = [0, -0.1, 0.1, 0]
+        nose_y = [1.1, 1.3, 1.3, 1.1]
+        ax.plot(nose_x, nose_y, 'k-', linewidth=2, zorder=0)
+        
+        # Settings
+        ax.set_xlim(-1.4, 1.4)
+        ax.set_ylim(-1.4, 1.5)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        ax.set_title(f'{class_names[class_label]}\n{band_name.capitalize()} Band', 
+                    fontsize=14, fontweight='bold', pad=20)
+        
+        # Connection count
+        ax.text(0.02, 0.98, f'Connections: {connection_count}', 
+               transform=ax.transAxes,
+               fontsize=10,
+               verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Add shared colorbar
+    sm = plt.cm.ScalarMappable(cmap='jet', 
+                               norm=plt.Normalize(vmin=0, vmax=1))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes, fraction=0.046, pad=0.04)
+    cbar.set_label('Connection Strength', rotation=270, labelpad=20)
+    
+    plt.tight_layout()
+    return fig
+
+
+def create_all_bands_comparison(connectivity_matrices, electrode_positions, 
+                                threshold=0.3, save_dir='/mnt/user-data/outputs'):
+    """
+    Create comparison plots for all frequency bands
+    """
+    bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
+    
+    # Create large figure with all bands
+    fig, axes = plt.subplots(len(bands), 2, figsize=(16, 8 * len(bands)))
+    
+    class_names = {0: 'Healthy Controls', 1: 'MDD Patients'}
+    
+    for band_idx, band_name in enumerate(bands):
+        for class_label, col_idx in zip([0, 1], [0, 1]):
+            ax = axes[band_idx, col_idx]
+            
+            conn_matrix = connectivity_matrices[class_label][band_name]
+            electrode_names = list(electrode_positions.keys())
+            
+            # Count connections
+            connection_count = 0
+            
+            # Draw connections
+            for i, elec1 in enumerate(electrode_names):
+                for j, elec2 in enumerate(electrode_names):
+                    if i < j:
+                        strength = conn_matrix[i, j]
+                        
+                        if strength > threshold:
+                            x1, y1 = electrode_positions[elec1]
+                            x2, y2 = electrode_positions[elec2]
+                            
+                            color = plt.cm.jet(strength)
+                            linewidth = 0.5 + 2.5 * strength
+                            
+                            ax.plot([x1, x2], [y1, y2], 
+                                   color=color, 
+                                   linewidth=linewidth, 
+                                   alpha=0.6,
+                                   zorder=1)
+                            connection_count += 1
+            
+            # Draw nodes
+            for elec_name, (x, y) in electrode_positions.items():
+                circle = Circle((x, y), 0.08, 
+                               facecolor='lightblue', 
+                               edgecolor='darkblue', 
+                               linewidth=2,
+                               zorder=2)
+                ax.add_patch(circle)
+                
+                ax.text(x, y, elec_name, 
+                       fontsize=7, 
+                       ha='center', 
+                       va='center',
+                       fontweight='bold',
+                       zorder=3)
+            
+            # Head outline
+            head_circle = Circle((0, 0), 1.1, 
+                                 facecolor='none', 
+                                 edgecolor='black', 
+                                 linewidth=2,
+                                 linestyle='--',
+                                 zorder=0)
+            ax.add_patch(head_circle)
+            
+            # Nose
+            nose_x = [0, -0.1, 0.1, 0]
+            nose_y = [1.1, 1.3, 1.3, 1.1]
+            ax.plot(nose_x, nose_y, 'k-', linewidth=2, zorder=0)
+            
+            # Settings
+            ax.set_xlim(-1.4, 1.4)
+            ax.set_ylim(-1.4, 1.5)
+            ax.set_aspect('equal')
+            ax.axis('off')
+            
+            # Title
+            title = f'{class_names[class_label]} - {band_name.capitalize()}'
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            
+            # Connection count
+            ax.text(0.02, 0.98, f'N={connection_count}', 
+                   transform=ax.transAxes,
+                   fontsize=9,
+                   verticalalignment='top',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Add shared colorbar
+    sm = plt.cm.ScalarMappable(cmap='jet', 
+                               norm=plt.Normalize(vmin=0, vmax=1))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes, fraction=0.03, pad=0.02)
+    cbar.set_label('Connection Strength', rotation=270, labelpad=15, fontsize=12)
+    
+    plt.suptitle('Brain Functional Connectivity: MDD vs Healthy Controls', 
+                fontsize=16, fontweight='bold', y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.995])
+    
+    # Save
+    save_path = Path(save_dir) / 'brain_connectivity_all_bands.png'
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved: {save_path}")
+    
+    return fig
+
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+def main():
+    """
+    Main function to generate brain connectivity visualizations
+    
+    Note: This assumes you have already run the main code and have
+    extracted features saved somewhere. For demonstration, we'll
+    generate synthetic connectivity matrices.
+    """
+    print("\n" + "="*70)
+    print(" BRAIN CONNECTIVITY VISUALIZATION")
+    print("="*70)
+    print("  Generating plots similar to Figure 10 from the paper")
+    print("  Dataset: MDD vs Healthy Controls (EC condition)")
+    print("="*70 + "\n")
+    
+    # Get electrode positions
+    electrode_positions = get_electrode_positions()
+    print(f"✓ Loaded {len(electrode_positions)} electrode positions")
+    
+    # For demonstration: Generate synthetic connectivity matrices
+    # In real use, these would come from your actual feature extraction
+    print("\n⚠ Note: Using synthetic data for demonstration")
+    print("  In production, load actual connectivity matrices from your data\n")
+    
+    np.random.seed(42)
+    n_channels = 19
+    bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
+    
+    connectivity_matrices = {}
+    
+    for class_label in [0, 1]:  # 0=Healthy, 1=MDD
+        connectivity_matrices[class_label] = {}
+        
+        for band_name in bands:
+            # Generate random connectivity matrix
+            conn_matrix = np.random.rand(n_channels, n_channels)
+            conn_matrix = (conn_matrix + conn_matrix.T) / 2  # Make symmetric
+            np.fill_diagonal(conn_matrix, 0)  # No self-connections
+            
+            # MDD has reduced connectivity (especially in gamma)
+            if class_label == 1:  # MDD
+                if band_name == 'gamma':
+                    conn_matrix *= 0.6  # Strong reduction in gamma
+                elif band_name in ['theta', 'beta']:
+                    conn_matrix *= 0.8  # Moderate reduction
+            
+            connectivity_matrices[class_label][band_name] = conn_matrix
+    
+    print("✓ Generated connectivity matrices for all bands\n")
+    
+    # Create visualizations
+    print("Creating visualizations...")
+    
+    # 1. Full comparison plot (all bands)
+    fig_all = create_all_bands_comparison(connectivity_matrices, 
+                                          electrode_positions,
+                                          threshold=0.3)
+    
+    # 2. Individual band comparisons
+    for band_name in bands:
+        fig = create_comparison_plot(connectivity_matrices, 
+                                    band_name,
+                                    electrode_positions,
+                                    threshold=0.3)
+        
+        save_path = f'/mnt/user-data/outputs/brain_connectivity_{band_name}.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Saved: brain_connectivity_{band_name}.png")
+        plt.close()
+    
+    print("\n" + "="*70)
+    print(" VISUALIZATION COMPLETE")
+    print("="*70)
+    print("  All plots saved to: /mnt/user-data/outputs/")
+    print("  Files:")
+    print("    - brain_connectivity_all_bands.png (main figure)")
+    print("    - brain_connectivity_delta.png")
+    print("    - brain_connectivity_theta.png")
+    print("    - brain_connectivity_alpha.png")
+    print("    - brain_connectivity_beta.png")
+    print("    - brain_connectivity_gamma.png")
+    print("="*70 + "\n")
+    
+    return connectivity_matrices
+
+
+if __name__ == "__main__":
+    connectivity_matrices = main()
