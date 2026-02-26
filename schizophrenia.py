@@ -1,32 +1,3 @@
-"""
-═══════════════════════════════════════════════════════════════════════
-  EXACT reproduction of Figure 3 (page 6) from:
-  "Selection and Stability of Functional Connectivity Features for
-   Classification of Brain Disorders" — Saha, Hazra & Ghosh (2025)
-
-  ── Figure 3 (2×2, exactly as in paper page 6) ───────────────────────
-    (a) Accuracy        vs Percentage of Selected Features
-    (b) F1 Score        vs Percentage of Selected Features
-    (c) Kuncheva Index  vs Percentage of Selected Features
-    (d) Jaccard Index   vs Percentage of Selected Features
-
-  ── Tables II & III (paper page 6) ──────────────────────────────────
-    Columns: Method | Accuracy | Precision | Recall | F1-Score
-    Table II  → top 5%  components
-    Table III → top 10% components
-
-  ── Other outputs ────────────────────────────────────────────────────
-    fig1_connectomes.png
-    fig5_roi_frequencies.png
-
-  ── KI/JI fix ────────────────────────────────────────────────────────
-  LASSO ranked by regularisation PATH ENTRY ORDER (lasso_path).
-  Features entering the path first (at highest alpha) are most
-  discriminative and enter consistently → guaranteed positive KI.
-  λ = 100 signatures (20 shuffles × 5 folds), KI/JI over C(100,2)=4950 pairs.
-═══════════════════════════════════════════════════════════════════════
-"""
-
 import warnings
 warnings.filterwarnings('ignore')
 
